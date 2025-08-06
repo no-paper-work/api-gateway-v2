@@ -1,0 +1,9 @@
+java \
+  -javaagent:agents/pyroscope.jar \
+  -javaagent:agents/opentelemetry-javaagent.jar \
+  -Dpyroscope.application.name=gateway \
+  -Dpyroscope.server.address=http://localhost:4040 \
+  -Dotel.service.name=gateway \
+  -Dotel.exporter.otlp.endpoint=http://localhost:4317 \
+  -Dotel.metrics.exporter=otlp \
+  -jar target/gateway-0.0.1-SNAPSHOT.jar
