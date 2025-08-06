@@ -2,7 +2,7 @@
 <configuration>
 
     <property name="LOGS" value="./logs" />
-    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [Trace: %mdc{trace_id}, Span: %mdc{span_id}] - %msg%n" />
+    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n" />
 
     <appender name="Console" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
@@ -10,29 +10,27 @@
         </encoder>
     </appender>
 
-    <appender name="Loki" class="com.github.loki4j.logback.Loki4jAppender">
-        <http>
-            <url>${LOKI_URL:-http://localhost:3100/loki/api/v1/push}</url>
-        </http>
-        <format>
-            <label>
-                <pattern>app=${spring.application.name},host=${HOSTNAME},level=%level,traceId=%mdc{trace_id:-NONE},spanId=%mdc{span_id:-NONE}</pattern>
-            </label>
-            <message>
-                <pattern>${LOG_PATTERN}</pattern>
-            </message>
-        </format>
+    <appender name="RollingFile" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOGS}/spring-boot-logger.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOGS}/archived/spring-boot-logger-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>1MB</maxFileSize>
+            <maxHistory>30</maxHistory> <totalSizeCap>100MB</totalSizeCap> </rollingPolicy>
     </appender>
 
-    <appender name="AsyncLoki" class="ch.qos.logback.classic.AsyncAppender">
-        <appender-ref ref="Loki" />
+    <appender name="AsyncRollingFile" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="RollingFile" />
         <discardingThreshold>0</discardingThreshold>
         <queueSize>256</queueSize>
     </appender>
 
     <root level="info">
         <appender-ref ref="Console" />
-        <appender-ref ref="AsyncLoki" />
+        <appender-ref ref="AsyncRollingFile" />
     </root>
 
 </configuration>

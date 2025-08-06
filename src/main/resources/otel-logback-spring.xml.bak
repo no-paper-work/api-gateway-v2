@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <property name="LOGS" value="./logs" />
+    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [Trace: %mdc{trace_id}, Span: %mdc{span_id}] - %msg%n" />
+
+    <appender name="Console" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="Loki" class="com.github.loki4j.logback.Loki4jAppender">
+        <http>
+            <url>${LOKI_URL:-http://localhost:3100/loki/api/v1/push}</url>
+        </http>
+        <format>
+            <label>
+                <pattern>app=${spring.application.name},host=${HOSTNAME},level=%level,traceId=%mdc{trace_id:-NONE},spanId=%mdc{span_id:-NONE}</pattern>
+            </label>
+            <message>
+                <pattern>${LOG_PATTERN}</pattern>
+            </message>
+        </format>
+    </appender>
+
+    <appender name="AsyncLoki" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="Loki" />
+        <discardingThreshold>0</discardingThreshold>
+        <queueSize>256</queueSize>
+    </appender>
+
+    <root level="info">
+        <appender-ref ref="Console" />
+        <appender-ref ref="AsyncLoki" />
+    </root>
+
+</configuration>
