@@ -1,12 +1,10 @@
 /**
  * @package com.nopaper.work.gateway.filter -> gateway
  * @author saikatbarman
- * @date 2025 07-Aug-2025 11:22:22 am
+ * @date 2025 07-Aug-2025 1:13:56 pm
  * @git 
  */
 package com.nopaper.work.gateway.filter;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
 
 /**
  * 
@@ -28,11 +26,9 @@ import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
-import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.server.reactive.ServerHttpResponseDecorator;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
@@ -40,7 +36,7 @@ import java.nio.charset.StandardCharsets;
 @Component
 @Slf4j
 @RequiredArgsConstructor
-public class ResponseWrappingAndEncryptionFilter implements GlobalFilter, Ordered {
+public class UnifiedGlobalFilter implements GlobalFilter, Ordered {
 
     private final ObjectMapper objectMapper;
     private final CryptoService cryptoService;
@@ -52,7 +48,7 @@ public class ResponseWrappingAndEncryptionFilter implements GlobalFilter, Ordere
         Route route = exchange.getAttribute(ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR);
         String encryptionKey = (route != null) ? (String) route.getMetadata().get("encryption_key") : null;
 
-        // Apply response decorator for templating and encryption
+        // Create the response decorator first
         ServerHttpResponseDecorator responseDecorator = new ServerHttpResponseDecorator(exchange.getResponse()) {
             @Override
             public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
@@ -60,15 +56,14 @@ public class ResponseWrappingAndEncryptionFilter implements GlobalFilter, Ordere
                     return super.writeWith(body);
                 }
 
-                // Buffer the entire body to transform it as a single unit
-                return DataBufferUtils.join(body).flatMap(dataBuffer -> {
+                Mono<DataBuffer> modifiedBody = DataBufferUtils.join(body).flatMap(dataBuffer -> {
                     byte[] content = new byte[dataBuffer.readableByteCount()];
                     dataBuffer.read(content);
                     DataBufferUtils.release(dataBuffer);
                     String originalBody = new String(content, StandardCharsets.UTF_8);
 
                     if (originalBody.isEmpty()) {
-                        return getDelegate().writeWith(Mono.empty());
+                        return Mono.just(getDelegate().bufferFactory().wrap(new byte[0]));
                     }
 
                     try {
@@ -88,33 +83,39 @@ public class ResponseWrappingAndEncryptionFilter implements GlobalFilter, Ordere
                         }
                         
                         getDelegate().getHeaders().setContentLength(finalResponseBytes.length);
-                        return getDelegate().writeWith(Mono.just(getDelegate().bufferFactory().wrap(finalResponseBytes)));
+                        return Mono.just(getDelegate().bufferFactory().wrap(finalResponseBytes));
                     } catch (Exception e) {
                         log.error("Error processing response. Returning original body. Error: {}", e.getMessage());
-                        return getDelegate().writeWith(Mono.just(dataBuffer));
+                        return Mono.just(dataBuffer); // Return original buffer on error
                     }
                 });
+
+                return super.writeWith(modifiedBody);
             }
         };
 
-        // If encryption is needed, decrypt the request first.
+        // If encryption is needed, decrypt the request first using the stable factory.
         if (encryptionKey != null) {
             var config = new ModifyRequestBodyGatewayFilterFactory.Config()
                 .setInClass(String.class).setOutClass(String.class)
                 .setRewriteFunction((ex, body) -> {
-                	String encryptedBodyAsString = (String) body;
-                    if (body != null) return Mono.just(cryptoService.decrypt(encryptedBodyAsString, encryptionKey));
+                    String encryptedBody = (String) body;
+                    if (encryptedBody != null && !encryptedBody.isEmpty()) {
+                        return Mono.just(cryptoService.decrypt(encryptedBody, encryptionKey));
+                    }
                     return Mono.empty();
                 });
+            // Apply request decryption THEN response decoration
             return modifyRequestBodyFactory.apply(config).filter(exchange.mutate().response(responseDecorator).build(), chain);
         }
 
-        // Otherwise, just apply the response decorator.
+        // If no encryption, just apply the response decorator.
         return chain.filter(exchange.mutate().response(responseDecorator).build());
     }
 
     @Override
     public int getOrder() {
-        return -2; // This filter should run late in the chain to modify the final response.
+        // A single filter handling everything should run late to wrap the final response.
+        return -2;
     }
 }
