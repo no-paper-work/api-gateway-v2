@@ -1,14 +1,15 @@
 /**
- * @package com.nopaper.work.gateway.configurations -> gateway
+ * @package com.nopaper.work.gateway.exceptions -> gateway
  * @author saikatbarman
- * @date 2025 06-Aug-2025 6:38:50 pm
+ * @date 2025 08-Aug-2025 11:32:31 am
  * @git 
  */
-package com.nopaper.work.gateway.configurations;
+package com.nopaper.work.gateway.exceptions;
 
 /**
  * 
  */
+
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,41 +22,39 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import java.util.Map;
 import java.util.UUID;
 
 @Component
-@Order(-1) // This gives our handler the highest precedence to catch all errors first.
+@Order(-1) // This gives our handler the highest precedence.
 @Slf4j
 @RequiredArgsConstructor
-public class GlobalErrorHandler implements ErrorWebExceptionHandler {
+public class GlobalErrorWebExceptionHandler implements ErrorWebExceptionHandler {
 
     private final ObjectMapper objectMapper;
+    private final CustomErrorAttributes globalErrorAttributes; // Inject our custom attributes class.
 
     @Override
     public Mono<Void> handle(ServerWebExchange exchange, Throwable ex) {
         
-        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR; // Default status
-        String message = "An unexpected internal server error occurred.";
+        // Create a ServerRequest to pass to the attributes class.
+        ServerRequest serverRequest = ServerRequest.create(exchange, java.util.Collections.emptyList());
+        Map<String, Object> errorAttributes = this.globalErrorAttributes.getErrorAttributes(serverRequest, org.springframework.boot.web.error.ErrorAttributeOptions.defaults());
 
-        // ✅ This is the crucial logic block to handle different exception types.
-        if (ex instanceof ResponseStatusException rse) {
-            // This handles standard Spring REST exceptions (e.g., 400 Bad Request).
-            status = (HttpStatus) rse.getStatusCode();
-            message = rse.getReason();
-        } else if (ex.getClass().getName().equals("org.springframework.web.reactive.resource.NoResourceFoundException")) {
-            // This specifically targets the exception that causes the Whitelabel 404 page.
-            status = HttpStatus.NOT_FOUND;
-            message = "The requested resource was not found.";
-        } else {
-            // This is a catch-all for any other unexpected exceptions.
+        int statusCode = (int) errorAttributes.getOrDefault("status", 500);
+        String message = (String) errorAttributes.getOrDefault("message", "An unexpected error occurred.");
+        
+        HttpStatus status = HttpStatus.valueOf(statusCode);
+        
+        if (status == HttpStatus.INTERNAL_SERVER_ERROR) {
             log.error("Unhandled exception in gateway: ", ex);
         }
 
-        // Build the standardized API response DTO.
+        // Build the final, standardized API response.
         ApiResponse<Object> errorResponse = ApiResponse.builder()
                 .statusCode(status.value())
                 .status(status)
@@ -64,18 +63,15 @@ public class GlobalErrorHandler implements ErrorWebExceptionHandler {
                 .trace_identity(getTraceId(exchange))
                 .build();
 
-        // Set the response status and headers.
         exchange.getResponse().setStatusCode(status);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
 
         try {
-            // Serialize the ApiResponse DTO and write it to the response body.
             byte[] errorBytes = objectMapper.writeValueAsBytes(errorResponse);
             DataBuffer dataBuffer = exchange.getResponse().bufferFactory().wrap(errorBytes);
             return exchange.getResponse().writeWith(Mono.just(dataBuffer));
         } catch (JsonProcessingException e) {
-            log.error("Error while serializing error response to JSON", e);
-            // Fallback for when serialization fails.
+            log.error("Error writing JSON error response", e);
             return exchange.getResponse().setComplete();
         }
     }
